@@ -1,0 +1,663 @@
+---
+title: "BASES DE MINUTOS A HORA"
+author: "Felipe Neira Rojas & Angel Llanos Herrera"
+date: "09-07-2025"
+output: 
+  prettydoc::html_pretty:
+    theme: cayman
+    toc: yes 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = FALSE, message=" ", warning = FALSE, comment=" ")
+```
+
+
+# Temperaturas (aire seco ts y al punto de rocio td)
+
+## Juntar todas las bases desde 2019 a 2025
+
+
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Nueva ruta para los CSV de temperatura
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Temperatura"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_Temperatura.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_Temperatura\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+Temperatura_220002_2019_2025 <- archivos %>%
+  set_names() %>%  
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# Si tus datos usan coma como separador decimal, en lugar de punto, sustituye por:
+# map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Si no quieres conservar la columna 'origen', elimínala con:
+# Temperatura_270001_2019_2025 <- select(Temperatura_270001_2019_2025, -origen)
+
+```
+
+## JUNTAR POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+Temperatura_220002_2019_2025_horaria <- Temperatura_220002_2019_2025 %>%
+  # 1) Seleccionar sólo las columnas de interés
+  select(codigoNacional, momento, ts, td) %>%
+  # 2) Asegurar que 'momento' es POSIXct
+  mutate(
+    momento = as.POSIXct(momento, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  ) %>%
+  # 3) “Pisar” cada timestamp al inicio de la hora
+  mutate(
+    momento = floor_date(momento, unit = "hour")
+  ) %>%
+  # 4) Agrupar por estación y hora, y calcular medias de ts y td
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    ts = mean(ts, na.rm = TRUE),
+    td = mean(td, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Vista previa
+head(Temperatura_220002_2019_2025_horaria)
+
+```
+
+
+# Nubosidad
+
+## Juntar todas las bases desde 2019 a 2025
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Ruta para los CSV de nubosidad
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Nubosidad"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_Nubosidad.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_Nubosidad\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+Nubosidad_220002_2019_2025 <- archivos %>%
+  set_names() %>%
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# (Opcional) Si tus datos usan coma como separador decimal, en lugar de punto:
+# Nubosidad_270001_2019_2025 <- archivos %>%
+#   set_names() %>%
+#   map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Eliminar la columna 'origen' si no la necesitas
+# Nubosidad_270001_2019_2025 <- select(Nubosidad_270001_2019_2025, -origen)
+
+```
+
+## JUNTAR POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+Nubosidad_220002_2019_2025_horaria <-
+  Nubosidad_220002_2019_2025 %>%
+  select(codigoNacional, momento, isSkyClear) %>%             # columnas de interés
+  mutate(
+    momento = as.POSIXct(momento, tz = "UTC"),                # asegura POSIXct
+    momento = floor_date(momento, "hour")                     # pisa al inicio de la hora
+  ) %>%
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    isSkyClear = mean(isSkyClear, na.rm = TRUE),              # ← proporción 0-1
+    n_obs      = sum(!is.na(isSkyClear)),                     # (opcional) nº de minutos válidos
+    .groups = "drop"
+  )
+```
+
+
+# Viento
+
+## Juntar todas las bases desde 2019 a 2025
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Ruta para los CSV de viento
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Viento"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_Viento.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_Viento\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+Viento_220002_2019_2025 <- archivos %>%
+  set_names() %>%  
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# (Opcional) Si tus datos usan coma como separador decimal, sustituye por:
+# map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Eliminar la columna 'origen' si no la necesitas
+# Viento_270001_2019_2025 <- select(Viento_270001_2019_2025, -origen)
+
+```
+
+## JUNTAR POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+Viento_220002_2019_2025_horaria <- Viento_220002_2019_2025 %>%
+  # 1) Seleccionar sólo las columnas necesarias
+  select(codigoNacional, momento, ddInst, ffInst) %>%
+  # 2) Asegurar que 'momento' es POSIXct
+  mutate(
+    momento = as.POSIXct(momento, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  ) %>%
+  # 3) “Pisar” cada timestamp al inicio de la hora
+  mutate(
+    momento = floor_date(momento, unit = "hour")
+  ) %>%
+  # 4) Agrupar por estación y hora, y calcular promedios de ddInst y ffInst
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    ddInst = mean(ddInst, na.rm = TRUE),
+    ffInst = mean(ffInst, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Vista previa
+head(Viento_220002_2019_2025_horaria)
+
+```
+
+
+# Rango Optico Meteorologico
+
+## Juntar todas las bases desde 2019 a 2025
+
+
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Ruta para los CSV de Rango Óptico Meteorológico
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Rango_Optico_Meteorologico"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_RangoOpticoMeteorologico.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_RangoOpticoMeteorologico\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+RangoOpticoMeteorologico_220002_2019_2025 <- archivos %>%
+  set_names() %>%
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# (Opcional) Si tus datos usan coma como separador decimal, en lugar de punto:
+# RangoOpticoMeteorologico_270001_2019_2025 <- archivos %>%
+#   set_names() %>%
+#   map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Eliminar la columna 'origen' si no la necesitas:
+# RangoOpticoMeteorologico_270001_2019_2025 <- 
+#   select(RangoOpticoMeteorologico_270001_2019_2025, -origen)
+
+```
+
+## JUNTAR POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+RangoOpticoMeteorologico_220002_2019_2025_horaria <- RangoOpticoMeteorologico_220002_2019_2025 %>%
+  # 1) Seleccionar sólo las columnas necesarias
+  select(codigoNacional, momento, morInst) %>%
+  # 2) Convertir 'momento' a POSIXct si no lo está y “pisar” al inicio de la hora
+  mutate(
+    momento = as.POSIXct(momento, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    momento = floor_date(momento, unit = "hour")
+  ) %>%
+  # 3) Agrupar por estación y hora, y calcular el promedio de morInst
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    morInst = mean(morInst, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Vista previa
+head(RangoOpticoMeteorologico_220002_2019_2025_horaria)
+
+```
+
+
+# Visibilidad
+
+## Juntar todas las bases desde 2019 a 2025
+
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Ruta para los CSV de visibilidad
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Visibilidad"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_Visibilidad.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_Visibilidad\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+Visibilidad_220002_2019_2025 <- archivos %>%
+  set_names() %>%
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# (Opcional) Si tus datos usan coma como separador decimal, en lugar de punto:
+# Visibilidad_270001_2019_2025 <- archivos %>%
+#   set_names() %>%
+#   map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Eliminar la columna 'origen' si no la necesitas:
+# Visibilidad_270001_2019_2025 <- 
+#   select(Visibilidad_270001_2019_2025, -origen)
+
+```
+
+
+## JUNTAR POR HORA
+
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+Visibilidad_220002_2019_2025_horaria <- Visibilidad_220002_2019_2025 %>%
+  # 1) Seleccionar sólo las columnas necesarias
+  select(codigoNacional, momento, vis1Minuto) %>%
+  # 2) Asegurar que 'momento' es POSIXct y pisar al inicio de la hora
+  mutate(
+    momento = as.POSIXct(momento, format = "%Y-%m-%d %H:%M:%S", tz = "UTC"),
+    momento = floor_date(momento, unit = "hour")
+  ) %>%
+  # 3) Agrupar por estación y hora, y calcular el promedio de vis1Minuto
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    vis1Minuto = mean(vis1Minuto, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Vista previa
+head(Visibilidad_220002_2019_2025_horaria)
+
+```
+
+
+# Presion y humedad
+
+## Juntar todas las bases desde 2019 a 2025
+
+```{r}
+library(readr)
+library(dplyr)
+library(purrr)
+library(stringr)
+
+# Ruta para los CSV de presión y humedad
+ruta <- "C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Presion_Humedad"
+
+# 1) Listar los CSV semicolon-separated de la estación 270001 (_AAAAMM_PresionHumedad.csv)
+archivos <- list.files(
+  path       = ruta,
+  pattern    = "^220002_[0-9]{6}_PresionHumedad\\.csv$",
+  full.names = TRUE
+) %>%
+  # Filtrar solo entre enero 2019 y mayo 2025
+  keep(~ {
+    fecha_txt <- str_extract(basename(.x), "(?<=_)[0-9]{6}(?=_)")
+    fecha     <- as.Date(paste0(fecha_txt, "01"), "%Y%m%d")
+    fecha >= as.Date("2019-01-01") && fecha <= as.Date("2025-06-01")
+  })
+
+# 2) Leer y concatenar todas las filas, usando ';' como separador
+PresionHumedad_220002_2019_2025 <- archivos %>%
+  set_names() %>%  
+  map_dfr(
+    ~ read_delim(.x,
+                 delim = ";",
+                 locale = locale(decimal_mark = ".", encoding = "UTF-8")),
+    .id = "origen"
+  )
+
+# Si tus datos usan coma como separador decimal, en lugar de punto, usa:
+# map_dfr(~ read_csv2(.x, locale = locale(encoding = "UTF-8")), .id = "origen")
+
+# (Opcional) Eliminar columna 'origen' si no la necesitas
+# PresionHumedad_270001_2019_2025 <- select(PresionHumedad_270001_2019_2025, -origen)
+
+```
+
+
+
+
+## JUNTAR POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+PresionHumedad_220002_2019_2025_horaria <- PresionHumedad_220002_2019_2025 %>%
+  # 1) Seleccionar sólo lo necesario
+  select(codigoNacional, momento, hr, qff) %>%
+  # 2) Asegurar que 'momento' es POSIXct
+  mutate(
+    momento = as.POSIXct(momento, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
+  ) %>%
+  # 3) “Pisar” cada timestamp al inicio de la hora
+  mutate(
+    momento = floor_date(momento, unit = "hour")
+  ) %>%
+  # 4) Agrupar por estación y hora, y calcular promedios de hr y qff
+  group_by(codigoNacional, momento) %>%
+  summarise(
+    hr  = mean(hr,  na.rm = TRUE),
+    qff = mean(qff, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Vista previa
+head(PresionHumedad_220002_2019_2025_horaria)
+
+```
+
+
+
+
+# JUNTAR TODAS 
+
+```{r}
+library(dplyr)
+library(purrr)
+library(readr)
+
+# 1) Pon tus data.frames en una lista
+tablas <- list(
+  Nubosidad   = Nubosidad_220002_2019_2025_horaria,
+  PresionHumedad = PresionHumedad_220002_2019_2025_horaria,
+  RangoOptico = RangoOpticoMeteorologico_220002_2019_2025_horaria,
+  Temperatura = Temperatura_220002_2019_2025_horaria,
+  Viento      = Viento_220002_2019_2025_horaria,
+  Visibilidad = Visibilidad_220002_2019_2025_horaria
+)
+
+# 2) Para quedarte solo con los registros donde todas coinciden, usa inner_join;
+#    si quieres conservar todos y rellenar con NA donde falte, cambia a full_join.
+datos_completos <- reduce(
+  tablas,
+  inner_join,
+  by = "momento"
+)
+
+# 3) Opcional: echa un vistazo
+glimpse(datos_completos)
+head(datos_completos)
+
+# 4) Guarda el CSV
+write_csv(datos_completos, "datos_220002_2019_2025_completo.csv")
+
+
+
+
+```
+
+## LIMPIAR VARIABLES REPETIDAS Y SIN INTERES
+
+```{r}
+
+
+names(datos_completos)
+
+
+library(dplyr)
+
+# 1) Define un vector con los nombres de las variables a eliminar
+vars_a_eliminar <- c("codigoNacional.x.x", "codigoNacional.y", 
+                     "codigoNacional.x.x.x", "codigoNacional.y.y",
+                     "codigoNacional.y.y.y", "n_obs", "td")
+
+# 2) Crea un nuevo data.frame sin esas columnas
+datos_limpios <- datos_completos %>%
+  select(-all_of(vars_a_eliminar))
+
+# 3) Comprueba que ya no están
+names(datos_limpios)
+
+
+write_csv(datos_limpios, "datos_220002_01012019_01072025_meteorologicas.csv")
+
+
+
+
+
+```
+
+
+
+# BASE DE ENERGIA POR CENTRAL (LIMPIAMOS Y DEJAMOS SOLO LAS CENTRALES DE INTERES)
+
+```{r}
+Electricidad_Generacion_Central_01_01_2024_03_07_2025 <- read_excel("C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Electricidad_Generacion_Central_01_01_2024_03_07_2025.xlsx")
+```
+
+
+```{r}
+
+# 1) Prepara data.table
+library(data.table)
+dt <- as.data.table(Electricidad_Generacion_Central_01_01_2024_03_07_2025)
+
+# 2) Filtra solo las dos centrales y renombra columnas
+dt_sel <- dt[
+  `Nombre Central` %in% c("PFV SOL DEL DESIERTO"),
+  .(datetime = `Fecha y Hora`,
+    central  = `Nombre Central`,
+    mwh      = `Generación ERNC (MWh)`)
+]
+
+# 3) Usa dcast para pivotar (rellena con 0 donde falte)
+gen_wide <- dcast(
+  dt_sel,
+  datetime ~ central,
+  value.var = "mwh",
+  fill = 0
+)
+
+# 4) Resultado
+library(dplyr)
+gen_wide <- as_tibble(gen_wide) %>%
+  arrange(datetime)
+
+# 5) Comprueba
+print(gen_wide)
+library(readr)
+
+write_csv(gen_wide, "Generacion_Energia_Solar_Sol_Desierto_01012024_02072025.csv")
+
+
+
+```
+
+# BASE RADIACION A UTC 00.
+
+
+```{r}
+library(readxl)
+Crucero2 <- read_excel("C:/Users/angel/Desktop/Trabajo_Final_Pronostico_Energia_Solar/Meteorologicas/Crucero2.xlsx", 
++     sheet = "Sheet2")
+
+
+```
+
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+# Suponemos que Crucero2$Fecha es un POSIXct sin zona (o con tz incorrecta)
+# y que en realidad representa instantes en UTC−4 fijo (sin considerar DST).
+
+Crucero2_UTC <- Crucero2 %>%
+  mutate(
+    # 1) Interpreta 'Fecha' como si fuera horario UTC−4 fijo:
+    Fecha = force_tz(Fecha, tzone = "Etc/GMT+4"),
+    # 2) Convierte ese POSIXct a UTC (sumando 4 h):
+    Fecha = with_tz(Fecha, tzone = "UTC")
+  )
+
+# Comprueba el resultado:
+head(Crucero2_UTC$Fecha)
+attr(Crucero2_UTC$Fecha, "tzone")
+
+```
+
+## LUEGO JUNTAMOS POR HORA
+
+```{r}
+library(dplyr)
+library(lubridate)
+
+Crucero2_hourly <- Crucero2_UTC %>%
+  # 1) Definir la hora truncando a la baja
+  mutate(hour = floor_date(Fecha, unit = "hour")) %>%
+  # 2) Agrupar por esa hora
+  group_by(hour) %>%
+  # 3) Resumir según lo que pides
+  summarise(
+    # acumulados en Wh/m²: irradiancia_mean (W/m²) × (10 min = 10/60 h)
+    GHI_accum     = sum(`Radiación Solar Global Horizontal en 2.0 metros [mean]`, na.rm = TRUE),
+    DNI_accum     = sum(`Radiación Directa Normal en 2.0 metros [mean]` , na.rm = TRUE),
+    DHI_accum     = sum(`Radiación Solar Difusa en 2.0 metros [mean]` , na.rm = TRUE),
+    # promedios simples
+    Temp_avg      = mean(`Temperatura en 2.0 metros [mean]`,      na.rm = TRUE),
+    RH_avg        = mean(`Humedad Relativa en 2.0 metros [mean]`, na.rm = TRUE),
+    Wind6_avg     = mean(`Velocidad de viento en 6.0 metros [mean]`,  na.rm = TRUE),
+    Wind12_avg    = mean(`Velocidad de viento en 12.0 metros [mean]`, na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  rename(Fecha = hour)
+
+# Una mirada rápida
+Crucero2_hourly %>% head()
+
+```
+
+
+```{r}
+# Asegúrate de tener cargado readr
+library(readr)
+
+# Exporta tu data.frame a CSV
+write_csv(Crucero2_hourly, 
+          "C:/Users/angel/Desktop/Crucero2_hourly.csv")
+
+# Mensaje opcional de confirmación
+message("CSV exportado a C:/Users/angel/Desktop/Crucero2_hourly.csv")
+
+```
+
+
